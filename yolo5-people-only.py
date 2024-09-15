@@ -12,11 +12,22 @@ cap = cv2.VideoCapture(0)
 
 bbox_history = collections.deque(maxlen=3) 
 
-def smooth_bbox(new_bbox):
-    bbox_history.append(new_bbox)  # Add the new bbox to history
-    # Calculate the average of the last few bboxes
-    avg_bbox = [sum(x) / len(x) for x in zip(*bbox_history)]
-    return avg_bbox
+def ease_with_history(current_bbox, easing_factor=0.5):
+    """Eases between the previous and current bounding boxes using history."""
+    if len(bbox_history) < 2:
+        # Not enough history yet, just return the current bounding box
+        return current_bbox
+
+    # Get the most recent (previous) bounding box from history
+    prev_bbox = bbox_history[0]
+    
+    # Apply easing between the previous and current bounding boxes
+    eased_bbox = [
+        prev_value + (curr_value - prev_value) * (easing_factor ** 2)
+        for prev_value, curr_value in zip(prev_bbox, current_bbox)
+    ]
+    
+    return eased_bbox
 
 def add_margin_top(y1, y2, margin_ratio=0.1):
     """Adds a margin to the top of the bounding box."""
@@ -24,33 +35,42 @@ def add_margin_top(y1, y2, margin_ratio=0.1):
     adjusted_y1 = y1 - margin_top  # Adjust the top by margin
     return max(adjusted_y1, 0)  # Ensure it doesn't go below 0 (frame boundary)
 
-frame_count = 0
-detection_interval = 3  # Run detection every 5 frames
-
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
 
-    frame_count += 1
-    if frame_count % detection_interval == 0:
-        results = model(frame)
-        # Extract results (bounding boxes, class ids, confidence scores)
-        detections = results.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2, conf, class]
+    results = model(frame)
+    # Extract results (bounding boxes, class ids, confidence scores)
+    detections = results.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2, conf, class]
 
-        # Filter detections to only include people (class id == 0)
-        for det in detections:
-            x1, y1, x2, y2, conf, cls = det
-            if int(cls) == 0:  # class ID for 'person' is 0
-                smooth_x1, smooth_y1, smooth_x2, smooth_y2 = smooth_bbox([x1, y1, x2, y2])
-                adjusted_y1 = add_margin_top(smooth_y1, smooth_y2, margin_ratio=0.1)
-                cv2.rectangle(frame, (int(smooth_x1), int(adjusted_y1)), (int(smooth_x2), int(smooth_y2)), (0, 255, 0), 2)
+    # Filter detections to only include people (class id == 0)
+    for det in detections:
+        x1, y1, x2, y2, conf, cls = det
+        if int(cls) == 0:  # class ID for 'person' is 0
+            # Current bounding box
+            current_bbox = [x1, y1, x2, y2]
 
-        # Display the frame
-        cv2.imshow('YOLOv5 Person Detection', frame)
+            # Smooth bounding boxes using easing
+            eased_bbox = ease_with_history(current_bbox)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            # Update the history with the current bounding box
+            bbox_history.append(current_bbox)
+
+            # Unpack eased bounding box
+            eased_x1, eased_y1, eased_x2, eased_y2 = eased_bbox
+
+            # Add margin to the top of the bounding box
+            adjusted_y1 = add_margin_top(eased_y1, eased_y2, margin_ratio=0.1)
+
+            # Draw the adjusted bounding box
+            cv2.rectangle(frame, (int(eased_x1), int(adjusted_y1)), (int(eased_x2), int(eased_y2)), (0, 255, 0), 2)
+
+    # Display the frame
+    cv2.imshow('YOLOv5 Person Detection', frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
 cap.release()
 cv2.destroyAllWindows()
