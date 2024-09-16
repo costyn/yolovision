@@ -4,8 +4,13 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import collections
 
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
 # Load the pre-trained YOLOv5 model
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).autoshape().to(device)
 
 # Open the video capture (0 for default webcam)
 cap = cv2.VideoCapture(0)
@@ -35,6 +40,7 @@ while cap.isOpened():
     frame_count += 1
     if frame_count % detection_interval == 0:
         results = model(frame)
+
         # Extract results (bounding boxes, class ids, confidence scores)
         detections = results.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2, conf, class]
 
