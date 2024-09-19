@@ -12,6 +12,10 @@ while capture.isOpened():
 
     results = model(frame,device="mps")
 
+    for result in results:
+            result.boxes = None
+            keypoints = result.keypoints.cuda().numpy()  # Get keypoints for each person
+            print(keypoints)  # Inspect keypoints (shape will be [N, 17, 3] for N persons)
     annotated_frame = results[0].plot()
 
     # Display the frame

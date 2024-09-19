@@ -22,19 +22,24 @@ model = YOLO('yolov8n-pose.pt')
 # Open the video capture (0 for default webcam)
 capture = cv2.VideoCapture(0)
 
+# Common pose connections (17 keypoints) – this is just an example, based on COCO dataset order
+connections = [
+    (0, 1), (1, 2),  # Nose -> Left eye -> Left ear
+    (0, 3), (3, 4),  # Nose -> Right eye -> Right ear
+    (5, 6),          # Left shoulder -> Right shoulder
+    (5, 7), (7, 9),  # Left shoulder -> Left elbow -> Left wrist
+    (6, 8), (8, 10), # Right shoulder -> Right elbow -> Right wrist
+    (11, 12),        # Left hip -> Right hip
+    (11, 13), (13, 15), # Left hip -> Left knee -> Left ankle
+    (12, 14), (14, 16)  # Right hip -> Right knee -> Right ankle
+]
+
 # Define function to map keypoints from image space to ILDA space (0x0000 to 0xFFF)
-def map_to_ilda_space(keypoints, frame_width, frame_height):
+def map_to_ilda_space(keypoints):
     ilda_points = []
     for x, y in keypoints:
-        # Ignore invalid points (0, 0) which aren't detected
-        if x == 0 and y == 0:
-            continue
-
-        # Normalize x and y to ILDA range
-        norm_x = x / frame_width
-        norm_y = y / frame_height
-        ilda_x = int(norm_x * 0xFFF)
-        ilda_y = int((1 - norm_y) * 0xFFF)  # Flip the y-axis for ILDA
+        ilda_x = int(x * 0xFFF)
+        ilda_y = int((1 - y) * 0xFFF)  # Flip the y-axis for ILDA
 
         ilda_points.append((ilda_x, ilda_y))
     
@@ -50,22 +55,30 @@ while capture.isOpened():
 
     # Iterate over results and extract keypoints
     for result in results:
+        result.boxes = None
         keypoints = result.keypoints.cpu().numpy()  # [N, 17, 3] array (x, y, confidence)
 
         # Map keypoints to ILDA space
-        ilda_keypoints = map_to_ilda_space(result.keypoints.xy[0], frame.shape[1], frame.shape[0])  # Use 'xy' for x, y coordinates
+        ilda_keypoints = map_to_ilda_space(result.keypoints.xyn[0])  # Use 'xyn' for normalized coordinates
         
-        # Create a frame of HeliosPoints
-        frame_data = (HeliosPoint * len(ilda_keypoints))()
-        for i, (x, y) in enumerate(ilda_keypoints):
-            frame_data[i] = HeliosPoint(x, y, 255, 255, 255, 255)  # White color, full intensity
+        ilda_points = []
+        for start, end in connections:
+            if start < len(ilda_keypoints) and end < len(ilda_keypoints):
+                start_point = ilda_keypoints[start]
+                end_point = ilda_keypoints[end]
+                
+                if start_point != (0, 0) and end_point != (0, 0):  # Skip invalid points
+                    # Append both start and end points to create a line between them
+                    ilda_points.append(HeliosPoint(start_point[0], start_point[1], 255, 255, 255, 255))
+                    ilda_points.append(HeliosPoint(end_point[0], end_point[1], 255, 255, 255, 255))
 
         # Send the frame to the Helios DAC
+        frame_data = (HeliosPoint * len(ilda_points))(*ilda_points)  # Convert to HeliosPoint array
         for device_id in range(numDevices):
             status_attempts = 0
             while status_attempts < 512 and HeliosLib.GetStatus(device_id) != 1:
                 status_attempts += 1
-            HeliosLib.WriteFrame(device_id, 25000, 0, ctypes.pointer(frame_data), len(ilda_keypoints))
+            HeliosLib.WriteFrame(device_id, 25000, 0, ctypes.pointer(frame_data), len(ilda_points))
 
     # Optionally, display the annotated video frame (without bounding boxes)
     annotated_frame = results[0].plot()
