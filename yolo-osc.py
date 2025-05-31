@@ -12,6 +12,16 @@ capture = cv2.VideoCapture(0)
 
 client = udp_client.SimpleUDPClient(client_ip, client_port)
 
+keypoint_names = [
+    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle"
+]
+
+confidence_threshold = 0.5
+
+
 # Main loop: Capture video, process, and print keypoints
 while capture.isOpened():
     ret, frame = capture.read()
@@ -28,20 +38,17 @@ while capture.isOpened():
         # Check if there are any keypoints detected
         if result.keypoints.has_visible:
             keypoints = result.keypoints.xyn[0]  # Normalized x, y coordinates
-            # Extract only the "head" keypoints (nose, left eye, right eye)
-            # head_keypoints = keypoints[[0, 1, 2]].cpu().numpy()  # [Nose, Left Eye, Right Eye]
+            confidences = result.keypoints.conf[0].cpu().numpy()  # Confidence scores
 
-            # print("Head keypoints (Nose, Left Eye, Right Eye):", head_keypoints)
+            for i, name in enumerate(keypoint_names):
+                if confidences[i] > confidence_threshold:  # Only send if confidence is high
+                    x, y = keypoints[i][0].item(), keypoints[i][1].item()
 
-            nose = keypoints[0]  # Extract nose data (index 0)
+                    # Send each keypoint x and y as individual OSC messages
+                    client.send_message(f"/pose/{name}/x", x)
+                    client.send_message(f"/pose/{name}/y", y)
 
-            nose_x, nose_y = nose[0].item(), nose[1].item()  # Extract x and y as floats
-
-            # Send the nose X and Y coordinates via OSC
-            client.send_message("/nose/x", nose_x)
-            client.send_message("/nose/y", nose_y)
-        else:
-            print("No keypoints detected in this frame")
+            print("Sent keypoints for detected person.")
 
     # Optionally, display the annotated video frame
     annotated_frame = results[0].plot()

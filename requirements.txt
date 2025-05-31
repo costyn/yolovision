@@ -3,3 +3,4 @@ torch
 pandas
 requests
 Pillow
+pythonosc
